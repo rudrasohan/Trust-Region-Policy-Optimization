@@ -7,20 +7,85 @@ import torch
 from torch.autograd import Variable
 #from models import GaussianMLPPolicy
 
+class RunningStat(object):
+    def __init__(self, shape):
+        self._n = 0
+        self._M = np.zeros(shape)
+        self._S = np.zeros(shape)
+
+    def push(self, x):
+        x = np.asarray(x)
+        assert x.shape == self._M.shape
+        self._n += 1
+        if self._n == 1:
+            self._M[...] = x
+        else:
+            oldM = self._M.copy()
+            self._M[...] = oldM + (x - oldM) / self._n
+            self._S[...] = self._S + (x - oldM) * (x - self._M)
+
+    @property
+    def n(self):
+        return self._n
+
+    @property
+    def mean(self):
+        return self._M
+
+    @property
+    def var(self):
+        return self._S / (self._n - 1) if self._n > 1 else np.square(self._M)
+
+    @property
+    def std(self):
+        return np.sqrt(self.var)
+
+    @property
+    def shape(self):
+        return self._M.shape
+
+class ZFilter:
+    """
+    y = (x-mean)/std
+    """
+
+    def __init__(self, shape, demean=True, destd=True, clip=10.0):
+        self.demean = demean
+        self.destd = destd
+        self.clip = clip
+
+        self.rs = RunningStat(shape)
+
+    def __call__(self, x, update=True):
+        if update: self.rs.push(x)
+        if self.demean:
+            x = x - self.rs.mean
+        if self.destd:
+            x = x / (self.rs.std + 1e-8)
+        if self.clip:
+            x = np.clip(x, -self.clip, self.clip)
+        return x
+
+    def output_shape(self, input_space):
+        return input_space.shape
+
 def sample_trajectories(env, policy, num_samples):
 
     trajs = dict(state=[], actions=[], rewards=[], next_state=[], dist=dict(means=[], log_std=[]), done=[])
     collected = 0
-
+    running_state = ZFilter((env.observation_space.shape[0],), clip=5)
     progress = tqdm(total=num_samples)
     s_0 = env.reset()
-    s_0 = torch.from_numpy(s_0)#.unsqueeze(0)
+    #s_0 = torch.from_numpy(s_0)#.unsqueeze(0)
+    s_0 = running_state(s_0)
+    #s_0 = torch.from_numpy(s_0)
     while collected < num_samples:
         
         action, dist = policy.actions(s_0)
-        #print(action)
         s_1, r, done, info = env.step(action)
-        trajs["state"].append(s_0.numpy())
+        #env.render()
+        s_1 = running_state(s_1)
+        trajs["state"].append(s_0)
         trajs["actions"].append(action)
         trajs["rewards"].append(r)
         trajs["next_state"].append(s_1)
@@ -31,9 +96,8 @@ def sample_trajectories(env, policy, num_samples):
         progress.update(1)
         if done:
             s_0 = env.reset()
-            s_0 = torch.from_numpy(s_0)#.unsqueeze(0)
         else:
-            s_0 = torch.from_numpy(s_1)#.unsqueeze(0)
+            s_0 = s_1
 
     progress.close()
     return trajs
@@ -42,17 +106,17 @@ def sample_trajectories(env, policy, num_samples):
 def compute_advantage_returns(trajs, baseline, discount, gae_lambda):
     
     obs = np.asarray(trajs['state'])
-    rewards = np.asarray(trajs['rewards'])
-    dones = np.asarray(trajs['done'])
-    values = baseline.predict(torch.from_numpy(obs))
+    rewards = torch.tensor(np.asarray(trajs['rewards']))
+    dones = torch.tensor(np.asarray(trajs['done']))
+    values = baseline.predict(obs)
 
     prev_return = 0.0#values.data[-1]
     prev_value = 0.0
     prev_adv = 0.0
 
-    returns = torch.zeros(rewards.shape)
-    deltas = torch.zeros(rewards.shape)
-    advantages = torch.zeros(rewards.shape)
+    returns = torch.zeros_like(rewards)
+    deltas = torch.zeros_like(rewards)
+    advantages = torch.zeros_like(rewards)
 
     for i in reversed(range(rewards.shape[0])):
         returns[i] = rewards[i] + discount * dones[i] * prev_return
@@ -62,19 +126,21 @@ def compute_advantage_returns(trajs, baseline, discount, gae_lambda):
         prev_return = returns[i]
         prev_value = values[i].data
         prev_adv = advantages[i]
+        #print("RETURNS:{}".format(returns[i]))
 
-    trajs['dist']['means'] = torch.stack(trajs['dist']['means']).data.clone()
-    trajs['dist']['log_std'] = torch.stack(trajs['dist']['log_std']).data.clone()
+    trajs['dist']['means'] = torch.stack(trajs['dist']['means']).data.detach()
+    trajs['dist']['log_std'] = torch.stack(trajs['dist']['log_std']).data.detach()
     trajs['actions'] = torch.stack(trajs['actions'])#.data.clone()
     trajs['returns'] = returns#.data.clone()
     trajs['advantages'] = (advantages - advantages.mean())/ (advantages.std() + 1e-8) 
-    trajs['baselines'] = values.data.clone()
+    trajs['baselines'] = values.data.detach()#.detach()#clone()
+    print(trajs['baselines'])
 
 
 def get_flat_params(params):
     flat_params = []
     for param in params:
-        flat_params.append(param.view(-1))
+        flat_params.append(param.data.view(-1))
     flat_params = torch.cat(flat_params)
     return flat_params
 

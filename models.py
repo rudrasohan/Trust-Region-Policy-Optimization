@@ -3,10 +3,13 @@
 import gym
 import numpy as np
 import torch
+import time
+import scipy.optimize
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from distributions import DiagonalGaussian
+from helpers import get_flat_params, set_flat_params, get_flat_grads
 #from helpers import sample_trajectories, compute_advantage_returns, get_flat_params
 
 class Model(object):
@@ -77,6 +80,8 @@ class MLP_Value(nn.Module):
         self.fc1 = nn.Linear(input_dim, 64)
         self.fc2 = nn.Linear(64, 64)
         self.fc3 = nn.Linear(64, output_dim)
+        self.fc3.weight.data.mul_(0.1)
+        self.fc3.bias.data.mul_(0.0)
 
     def forward(self, x):
         #print(self.fc1(x))
@@ -92,7 +97,6 @@ class GaussianMLPPolicy(Model):
         Model.__init__(self, observation_space, action_space, **kwargs)
         #self.mean_network = MLP(self.obs_dim, self.act_dim, "mean").type(torch.float64)
         self.std_net = None
-        self.count = 0
         #self.std_network = None
         #print(kwargs)
         if bool(kwargs):
@@ -103,17 +107,12 @@ class GaussianMLPPolicy(Model):
             self.network = MLP_Policy(self.obs_dim, self.act_dim, "MLP_policy")#.type(torch.float64)
 
     def actions(self, obs):
-
-        mean, log_std = self.network(obs)
-        #print(log_std.exp())
-            
+        obs = torch.from_numpy(obs)
+        mean, log_std = self.network(obs)            
         dist = DiagonalGaussian(mean, log_std)
         return dist.sample(), dist.get_param()
 
     def clear_grads(self):
-        #self.mean_network.zero_grad()
-        #if self.std_net:
-        #    self.std_network.zero_grad()
         self.network.zero_grad()
         
 
@@ -126,24 +125,77 @@ class MLPBaseline(Model):
         self.optimizer = torch.optim.LBFGS(self.value.parameters())
 
     def predict(self, obs):
-        obs = Variable(obs)
-        return self.value(obs)
+        obs = torch.Tensor(obs)
+        with torch.no_grad():
+            val = self.value(obs)
+        return val
+
+    def compute_baseline(self, obs):
+        obs = torch.Tensor(obs)
+        return self.value(torch.tensor(obs))
+
+    def clear_grads(self):
+        self.value.zero_grad()
 
     def update(self, trajs):
         obs = np.asarray(trajs["state"])
+        obs = torch.from_numpy(obs)
         returns = trajs["returns"]
         baselines = trajs["baselines"]
-        self.value.train()
-        targets = (returns * 0.9 + 0.1 * baselines).data.clone()
-
-        self.value.zero_grad()
+        returns = returns.view((obs.shape[0],1))
+        targets =  returns * 0.9 + 0.1 * baselines
+        #returns = 
+        #targets = Variable(returns)
+        #print(targets)
+        '''
         def closure():
+            self.clear_grads()
             values = self.value(torch.from_numpy(obs))
             self.optimizer.zero_grad()
             loss = self.criterion(values, targets)
+            print("LBFGS_LOSS:{}".format(loss))
             loss.backward()
             return loss
-        self.optimizer.step(closure)
+            '''
+
+        
+        #self.optimizer.step(closure)
+
+        #curr_params = get_flat_params(self.value.parameters()).data.detach().double().numpy()
+        curr_flat_params = get_flat_params(self.value.parameters()).double().numpy()
+        
+        def val_loss_grad(x):
+            
+            set_flat_params(self.value, torch.tensor(x))
+            self.clear_grads()
+            
+            #for param in self.value.parameters():
+                #if param.grad is not None:
+                    #print("HHAHAHAHAHHA")
+                    #param.grad.data.fill_(0)
+            #values_ = #self.value(torch.from_numpy(obs))
+            
+            values_ = self.value(Variable(obs))
+            #print("VALUES",values_.size())
+            #print("TARGETS",targets.size())
+            #print((values_-targets).size())
+            #time1 = time.time()
+            vf_loss = (values_ - targets).pow(2).mean()
+            #print("LBFGS_LOSS:{}".format(vf_loss))
+            #time2 = time.time()
+            #print("TIME:{}".format(time2-time1))
+            #for param in self.value.parameters():
+            #    vf_loss += param.pow(2).sum() * 1e-2
+            vf_loss.backward()
+            flat_grad = get_flat_grads(self.value)
+            
+            return (vf_loss.data.double().numpy(), flat_grad.data.double().numpy())
+
+        new_params, _, opt_info = scipy.optimize.fmin_l_bfgs_b(val_loss_grad, curr_flat_params, maxiter=25)
+        set_flat_params(self.value, torch.Tensor(new_params))
+        
+        print(opt_info)
+
         
 
 

@@ -19,8 +19,11 @@ class Distribution(object):
         raise NotImplementedError
 
     def logli_ratio(self, other, val):
+        #print(val)
         logli_new = self.logli(val)
-        logli_old = other.logli(val).data.clone()
+        logli_old = other.logli(val)
+        #print("SO NEW", logli_new)
+        #print("SO_OLD", logli_old)
         return (logli_new - logli_old).exp()
 
 

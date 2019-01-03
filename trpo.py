@@ -17,7 +17,7 @@ def compute_surr_losses(policy, trajs):
     #advantage.backward()
     
 
-    _, new_dists = policy.actions(torch.from_numpy(observations))
+    _, new_dists = policy.actions(observations)
     new_means = new_dists["mean"]
     new_std = new_dists["log_std"]
     #print((new_means - old_means).mean())
@@ -30,10 +30,10 @@ def compute_surr_losses(policy, trajs):
     #print(actions)
     importance_sampling = dist_new.logli_ratio(dist_old, actions)#(p2-p1).exp()#dist_new.logli_ratio(dist_old, actions)
     surr_loss = -(importance_sampling * advantage)
-    print(surr_loss.shape)
+    #print(surr_loss.shape)
     surr_loss = surr_loss.mean()
     #surr_loss = Variable(surr_loss)
-    print("SURR LOSS ",surr_loss)
+    #print("SURR LOSS ",surr_loss)
     return surr_loss
 
 
@@ -56,7 +56,7 @@ def compute_kl_div(policy, trajs, subsample_ratio=1.0):
         subsample_dists = dict(means=old_means, log_std=old_std)
 
 
-    _, new_dists = policy.actions(torch.from_numpy(subsample_obs))
+    _, new_dists = policy.actions(subsample_obs)
     new_means = new_dists["mean"]
     new_std = new_dists["log_std"]
     old_means = subsample_dists["means"]
@@ -72,7 +72,6 @@ def fvp(policy, f_kl, grads, v, eps=1e-5, damping=1e-8):
     flat_params = get_flat_params(policy.network.parameters())
     set_flat_params(policy.network, (flat_params + eps * v))
     policy.clear_grads()
-    #policy.count += 1
     kl_loss = f_kl()
     print("KLTHAT MATTERS ",kl_loss)
     kl_loss.backward(retain_graph=True)
@@ -126,7 +125,10 @@ def linesearch(f, x0, dx, expected_improvement, y0=None, backtrack_ratio=0.8, ma
             with torch.no_grad():
                 y = f(x)
             actual_improvement = y0 - y
-            if actual_improvement / (expected_improvement * ratio) >= accept_ratio:
+            if (actual_improvement / (expected_improvement * ratio)) >= accept_ratio:
+                print("ExpectedImprovement: {}".format(expected_improvement*ratio))
+                print("ActualImprovement: {}".format(actual_improvement))
+                print("ImprovementRatio: {}".format(actual_improvement / (expected_improvement * ratio)))
                 return x
 
     return x0
@@ -136,8 +138,8 @@ def linesearch(f, x0, dx, expected_improvement, y0=None, backtrack_ratio=0.8, ma
 
 def trpo_step(policy, baseline, trajs, step_size=0.01, use_linesearch=True, subsample_ratio=1.0, gamma=0.99, gae_lambda=0.97):
     ###function in function helper function####
-    compute_advantage_returns(trajs, baseline, gamma, gae_lambda)
-    policy.network.train()
+    #compute_advantage_returns(trajs, baseline, gamma, gae_lambda)
+    #policy.network.train()
     def f_loss():
         return compute_surr_losses(policy, trajs)
 
@@ -165,12 +167,12 @@ def trpo_step(policy, baseline, trajs, step_size=0.01, use_linesearch=True, subs
     def FH(v):
         return fvp_Hess(policy, f_kl, v)
     
-    dir_cg = conjugate_gradient(FH, -flat_grad)
+    dir_cg = conjugate_gradient(Fx, flat_grad)
     #print("DIRN I=",torch.dot(dir_cg,Fx(dir_cg)))
-    scale = torch.sqrt(2.0 * step_size / (torch.dot(dir_cg,FH(dir_cg)) + 1e-8))
+    scale = torch.sqrt(2.0 * step_size / (torch.dot(dir_cg,Fx(dir_cg)) + 1e-8))
     print("SCALE:", scale)
 
-    descent_step = dir_cg * scale
+    descent_step = dir_cg * scale.data.clone()
 
     curr_flat_params = get_flat_params(policy.network.parameters())
     #new_flat_params = None
@@ -179,17 +181,21 @@ def trpo_step(policy, baseline, trajs, step_size=0.01, use_linesearch=True, subs
         #print(expected_improvement)
 
         def f_barrier(x):
+            with torch.no_grad():
+                su_lo = f_loss()
             set_flat_params(policy.network, x)
             with torch.no_grad():
                 surr_loss = f_loss()
                 kl = f_kl()
+
+            print("OLD_LOSS:{}, NEW_LOSS:{}".format(su_lo, surr_loss))
             return surr_loss.data + 1e100 * max((kl.data - step_size), 0.)
 
         new_flat_params = linesearch(
             f_barrier,
             x0=curr_flat_params,
             dx=descent_step,
-            y0=surr_loss,
+            y0=surr_loss.data.clone(),
             expected_improvement=expected_improvement
         )
 
