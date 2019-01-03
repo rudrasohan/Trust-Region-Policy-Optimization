@@ -107,34 +107,39 @@ def compute_advantage_returns(trajs, baseline, discount, gae_lambda):
     
     obs = np.asarray(trajs['state'])
     rewards = torch.tensor(np.asarray(trajs['rewards']))
-    dones = torch.tensor(np.asarray(trajs['done']))
+    dones = np.asarray(trajs['done'])
+    #print("DONES",dones.shape)
     values = baseline.predict(obs)
 
     prev_return = 0.0#values.data[-1]
     prev_value = 0.0
     prev_adv = 0.0
 
-    returns = torch.zeros_like(rewards)
+    returns = torch.zeros(rewards.size(0),1)
     deltas = torch.zeros_like(rewards)
     advantages = torch.zeros_like(rewards)
 
     for i in reversed(range(rewards.shape[0])):
+        #print(i)
         returns[i] = rewards[i] + discount * dones[i] * prev_return
-        deltas[i] = rewards[i] + discount * dones[i] * prev_value - values.data[i]
+        #print("HAHHAHHAHHAHAHAHAHHAHHAHAHHAHHA", discount * dones[i] * prev_value - values.data[i][0])
+        deltas[i] = rewards[i] + discount * dones[i] * prev_value - values.data[i][0]
         advantages[i] = deltas[i] + (gae_lambda * discount) * prev_adv * dones[i]
 
-        prev_return = returns[i]
-        prev_value = values[i].data
+        prev_return = returns[i][0]
+        prev_value = values[i][0].data
         prev_adv = advantages[i]
+        #print("PREV_R", prev_return)
+        #print("PREV_V", prev_value)
+        #print("PREV_A", prev_adv)
         #print("RETURNS:{}".format(returns[i]))
 
     trajs['dist']['means'] = torch.stack(trajs['dist']['means']).data.detach()
     trajs['dist']['log_std'] = torch.stack(trajs['dist']['log_std']).data.detach()
-    trajs['actions'] = torch.stack(trajs['actions'])#.data.clone()
-    trajs['returns'] = returns#.data.clone()
+    trajs['actions'] = torch.stack(trajs['actions'])
+    trajs['returns'] = returns
     trajs['advantages'] = (advantages - advantages.mean())/ (advantages.std() + 1e-8) 
-    trajs['baselines'] = values.data.detach()#.detach()#clone()
-    print(trajs['baselines'])
+    trajs['baselines'] = values.data.detach()
 
 
 def get_flat_params(params):
@@ -154,7 +159,6 @@ def set_flat_params(model, flat_params):
 def get_flat_grads(model):
     grads = []
     for param in model.parameters():
-        #print(param.grad)
         grads.append(param.grad.view(-1))
     flat_grad = torch.cat(grads)
     return flat_grad

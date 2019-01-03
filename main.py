@@ -35,9 +35,10 @@ def run_experiments():
                 sumi = 0.0
         print("Reward = {}".format(np.mean(avg)))
         #baseline.update(paths)
-        compute_advantage_returns(paths, baseline, 0.99, 0.97)
-        baseline.update(paths)
+        #compute_advantage_returns(paths, baseline, 0.99, 0.97)
         trpo_step(policy, baseline, paths)
+        baseline.update(paths)
+        del paths
         
         #print("COUNT:", policy.count)
         

@@ -46,8 +46,8 @@ class MLP_Policy(nn.Module):
         self.fc1 = nn.Linear(input_dim, 64)
         self.fc2 = nn.Linear(64, 64)
         self.fc3 = nn.Linear(64, output_dim)
-        self.fc3.weight.data.mul_(0.1)
-        self.fc3.bias.data.mul_(0.0)
+        #self.fc3.weight.data.mul_(0.1)
+        #self.fc3.bias.data.mul_(0.0)
         if bool(kwargs):
             self.use_new_head = kwargs["use_new_head"]
             self.fc4 = nn.Linear(64, output_dim)
@@ -80,8 +80,8 @@ class MLP_Value(nn.Module):
         self.fc1 = nn.Linear(input_dim, 64)
         self.fc2 = nn.Linear(64, 64)
         self.fc3 = nn.Linear(64, output_dim)
-        self.fc3.weight.data.mul_(0.1)
-        self.fc3.bias.data.mul_(0.0)
+        #self.fc3.weight.data.mul_(0.1)
+        #self.fc3.bias.data.mul_(0.0)
 
     def forward(self, x):
         #print(self.fc1(x))
@@ -121,28 +121,27 @@ class MLPBaseline(Model):
     def __init__(self, observation_space, action_space, **kwargs):
         Model.__init__(self, observation_space, action_space, **kwargs)
         self.value = MLP_Value(self.obs_dim, 1, "MLP_baseline")
-        self.criterion = nn.MSELoss()
-        self.optimizer = torch.optim.LBFGS(self.value.parameters())
+        #self.criterion = nn.MSELoss()
+        #self.optimizer = torch.optim.LBFGS(self.value.parameters())
 
     def predict(self, obs):
-        obs = torch.Tensor(obs)
+        obs = torch.tensor(obs)
         with torch.no_grad():
             val = self.value(obs)
         return val
 
     def compute_baseline(self, obs):
-        obs = torch.Tensor(obs)
-        return self.value(torch.tensor(obs))
+        obs = torch.tensor(obs)
+        return self.value(obs)
 
     def clear_grads(self):
         self.value.zero_grad()
 
     def update(self, trajs):
         obs = np.asarray(trajs["state"])
-        obs = torch.from_numpy(obs)
+        #obs = torch.from_numpy(obs)
         returns = trajs["returns"]
         baselines = trajs["baselines"]
-        returns = returns.view((obs.shape[0],1))
         targets =  returns * 0.9 + 0.1 * baselines
         #returns = 
         #targets = Variable(returns)
@@ -175,13 +174,13 @@ class MLPBaseline(Model):
                     #param.grad.data.fill_(0)
             #values_ = #self.value(torch.from_numpy(obs))
             
-            values_ = self.value(Variable(obs))
+            values_ = self.compute_baseline(obs)
             #print("VALUES",values_.size())
             #print("TARGETS",targets.size())
             #print((values_-targets).size())
             #time1 = time.time()
             vf_loss = (values_ - targets).pow(2).mean()
-            #print("LBFGS_LOSS:{}".format(vf_loss))
+            print("LBFGS_LOSS:{}".format(vf_loss))
             #time2 = time.time()
             #print("TIME:{}".format(time2-time1))
             #for param in self.value.parameters():
@@ -192,7 +191,7 @@ class MLPBaseline(Model):
             return (vf_loss.data.double().numpy(), flat_grad.data.double().numpy())
 
         new_params, _, opt_info = scipy.optimize.fmin_l_bfgs_b(val_loss_grad, curr_flat_params, maxiter=25)
-        set_flat_params(self.value, torch.Tensor(new_params))
+        set_flat_params(self.value, torch.tensor(new_params))
         
         print(opt_info)
 

@@ -9,31 +9,20 @@ def compute_surr_losses(policy, trajs):
     observations = np.asarray(trajs["state"])
     actions = trajs["actions"]
 
-    old_means = trajs["dist"]["means"]#.data.clone()
-    #print(old_means)
-    old_std = trajs["dist"]["log_std"]#.data.clone()
-    #print(old_std.size())
+    old_means = trajs["dist"]["means"]
+    old_std = trajs["dist"]["log_std"]
     advantage = trajs["advantages"]
-    #advantage.backward()
-    
 
     _, new_dists = policy.actions(observations)
     new_means = new_dists["mean"]
     new_std = new_dists["log_std"]
-    #print((new_means - old_means).mean())
 
     dist_old = DiagonalGaussian(old_means, old_std)
-    #p1 = normal_log_density(actions, old_means, old_std)#.data.clone()
-    #p2 = normal_log_density(actions, new_means, new_std)
-    
     dist_new = DiagonalGaussian(new_means, new_std)
-    #print(actions)
-    importance_sampling = dist_new.logli_ratio(dist_old, actions)#(p2-p1).exp()#dist_new.logli_ratio(dist_old, actions)
-    surr_loss = -(importance_sampling * advantage)
-    #print(surr_loss.shape)
-    surr_loss = surr_loss.mean()
-    #surr_loss = Variable(surr_loss)
-    #print("SURR LOSS ",surr_loss)
+    #print(actions.size())
+
+    importance_sampling = dist_new.logli_ratio(dist_old, actions)
+    surr_loss = -(importance_sampling * advantage).mean()
     return surr_loss
 
 
@@ -41,7 +30,6 @@ def compute_kl_div(policy, trajs, subsample_ratio=1.0):
     observations = np.asarray(trajs["state"])
     old_means = trajs["dist"]["means"]
     old_std = trajs["dist"]["log_std"]
-    #print(policy.count)
 
     ep_len = observations.shape[0]
     if subsample_ratio < 1.0:
@@ -51,7 +39,6 @@ def compute_kl_div(policy, trajs, subsample_ratio=1.0):
         subsample_obs = observations[mask]
         subsample_dists = dict(means=old_means[mask], log_std=old_std[mask])
     else:
-        #print("ALLALL")
         subsample_obs = observations
         subsample_dists = dict(means=old_means, log_std=old_std)
 
@@ -60,11 +47,10 @@ def compute_kl_div(policy, trajs, subsample_ratio=1.0):
     new_means = new_dists["mean"]
     new_std = new_dists["log_std"]
     old_means = subsample_dists["means"]
-    #print((new_means - old_means).mean())
     old_std = subsample_dists["log_std"]
     dist_old = DiagonalGaussian(old_means, old_std)
     dist_new = DiagonalGaussian(new_means, new_std)
-    kl_divs = dist_new.kl_div(dist_old).mean()
+    kl_divs = dist_old.kl_div(dist_new).mean()
     return kl_divs
 
 def fvp(policy, f_kl, grads, v, eps=1e-5, damping=1e-8):
@@ -78,7 +64,6 @@ def fvp(policy, f_kl, grads, v, eps=1e-5, damping=1e-8):
     grads_e = get_flat_grads(policy.network)
     set_flat_params(policy.network, flat_params)
     finite_diff = (grads_e - grads)/eps + damping * flat_params
-    #print(finite_diff)
     return finite_diff
 
 def fvp_Hess(policy, f_kl, v, damping=1e-1):
@@ -98,9 +83,7 @@ def conjugate_gradient(Fx, b, cg_iters=10, residual_tol=1e-10):
     r = b.clone()
     x = torch.zeros(b.size())
     rr = torch.dot(r,r)
-    print(rr)
     for i in range(cg_iters):
-        #print("CG_ITERS.{}".format(i))
         Avp = Fx(p)
         alpha = rr / torch.dot(p, Avp)
         x += alpha * p
@@ -138,7 +121,7 @@ def linesearch(f, x0, dx, expected_improvement, y0=None, backtrack_ratio=0.8, ma
 
 def trpo_step(policy, baseline, trajs, step_size=0.01, use_linesearch=True, subsample_ratio=1.0, gamma=0.99, gae_lambda=0.97):
     ###function in function helper function####
-    #compute_advantage_returns(trajs, baseline, gamma, gae_lambda)
+    compute_advantage_returns(trajs, baseline, gamma, gae_lambda)
     #policy.network.train()
     def f_loss():
         return compute_surr_losses(policy, trajs)
@@ -172,7 +155,7 @@ def trpo_step(policy, baseline, trajs, step_size=0.01, use_linesearch=True, subs
     scale = torch.sqrt(2.0 * step_size / (torch.dot(dir_cg,Fx(dir_cg)) + 1e-8))
     print("SCALE:", scale)
 
-    descent_step = dir_cg * scale.data.clone()
+    descent_step = dir_cg * scale
 
     curr_flat_params = get_flat_params(policy.network.parameters())
     #new_flat_params = None
@@ -181,14 +164,10 @@ def trpo_step(policy, baseline, trajs, step_size=0.01, use_linesearch=True, subs
         #print(expected_improvement)
 
         def f_barrier(x):
-            with torch.no_grad():
-                su_lo = f_loss()
             set_flat_params(policy.network, x)
             with torch.no_grad():
                 surr_loss = f_loss()
                 kl = f_kl()
-
-            print("OLD_LOSS:{}, NEW_LOSS:{}".format(su_lo, surr_loss))
             return surr_loss.data + 1e100 * max((kl.data - step_size), 0.)
 
         new_flat_params = linesearch(

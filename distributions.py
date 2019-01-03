@@ -19,11 +19,8 @@ class Distribution(object):
         raise NotImplementedError
 
     def logli_ratio(self, other, val):
-        #print(val)
         logli_new = self.logli(val)
         logli_old = other.logli(val)
-        #print("SO NEW", logli_new)
-        #print("SO_OLD", logli_old)
         return (logli_new - logli_old).exp()
 
 
@@ -56,18 +53,13 @@ class DiagonalGaussian(Distribution):
 
     #@register_kl(P.Independent, P.Independent)
     def kl_div(self, other):
-        deviations = (self.log_std - other.log_std)
+        deviations = (other.log_std - self.log_std)
         d1 = (2.0 * self.log_std).exp()
         d2 = (2.0 * other.log_std).exp()
         sqmeans = (self.mean - other.mean).pow(2)
-        assert d1.size() == d2.size()
-        assert self.mean.size() == other.mean.size() 
         d_KL = (sqmeans + d1 - d2) / (2.0 * d2 + 1e-8) + deviations
-        #print(d_KL.size())
         d_KL = d_KL.sum(1)
         d_KL = torch.squeeze(d_KL)
-        #print(d_KL.size())
-        #d_KL = d_KL.sum()
         return d_KL
 
     def entropy(self):
