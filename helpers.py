@@ -5,6 +5,7 @@ import math
 import numpy as np
 import torch
 from torch.autograd import Variable
+from torch.nn.utils.convert_parameters import vector_to_parameters, parameters_to_vector
 #from models import GaussianMLPPolicy
 
 class RunningStat(object):
@@ -71,7 +72,7 @@ class ZFilter:
 
 def sample_trajectories(env, policy, num_samples):
 
-    trajs = dict(state=[], actions=[], rewards=[], next_state=[], dist=dict(means=[], log_std=[]), done=[])
+    trajs = dict(state=[], actions=[], rewards=[], next_state=[], act_prob=[], done=[])
     collected = 0
     running_state = ZFilter((env.observation_space.shape[0],), clip=5)
     progress = tqdm(total=num_samples)
@@ -79,25 +80,45 @@ def sample_trajectories(env, policy, num_samples):
     #s_0 = torch.from_numpy(s_0)#.unsqueeze(0)
     s_0 = running_state(s_0)
     #s_0 = torch.from_numpy(s_0)
+    step_count = 0
+    rew_count = 0.0
+    rew_batch = 0.0
+    num_ep = 0
     while collected < num_samples:
         
-        action, dist = policy.actions(s_0)
+        action, logp = policy.actions(s_0)
         s_1, r, done, info = env.step(action)
-        #env.render()
         s_1 = running_state(s_1)
+        rew_count += r
         trajs["state"].append(s_0)
         trajs["actions"].append(action)
         trajs["rewards"].append(r)
         trajs["next_state"].append(s_1)
-        trajs["dist"]["means"].append(dist["mean"])
-        trajs["dist"]["log_std"].append(dist["log_std"])
-        trajs["done"].append(int(not done))
+        trajs["act_prob"].append(logp)
+        #trajs["dist"]["means"].append(dist["mean"])
+        #trajs["dist"]["log_std"].append(dist["log_std"])
         collected += 1
+        step_count += 1
+    
+        #if (collected+1)%1000 == 0:
+            #print("GO")
+            #done = True
+        trajs["done"].append(int(not done))
+        
         progress.update(1)
         if done:
+            #print("STEP COUNT",step_count," TOTAL COUNT", collected)
+            #print("REW COUNT",rew_count)
+            rew_batch += rew_count
+            num_ep += 1
+            step_count = 0
+            rew_count = 0.0
             s_0 = env.reset()
         else:
             s_0 = s_1
+
+    print("TOTAL REW", rew_batch)
+    print("AVERAGE REWARD", rew_batch/num_ep,",",num_ep)
 
     progress.close()
     return trajs
@@ -106,12 +127,10 @@ def sample_trajectories(env, policy, num_samples):
 def compute_advantage_returns(trajs, baseline, discount, gae_lambda):
     
     obs = np.asarray(trajs['state'])
-    rewards = torch.tensor(np.asarray(trajs['rewards']))
+    rewards = torch.Tensor(np.asarray(trajs['rewards']))
     dones = np.asarray(trajs['done'])
-    #print("DONES",dones.shape)
-    values = baseline.predict(obs)
-
-    prev_return = 0.0#values.data[-1]
+    values = baseline.predict(obs).data
+    prev_return = 0.0
     prev_value = 0.0
     prev_adv = 0.0
 
@@ -120,47 +139,29 @@ def compute_advantage_returns(trajs, baseline, discount, gae_lambda):
     advantages = torch.zeros_like(rewards)
 
     for i in reversed(range(rewards.shape[0])):
-        #print(i)
-        returns[i] = rewards[i] + discount * dones[i] * prev_return
-        #print("HAHHAHHAHHAHAHAHAHHAHHAHAHHAHHA", discount * dones[i] * prev_value - values.data[i][0])
-        deltas[i] = rewards[i] + discount * dones[i] * prev_value - values.data[i][0]
+        returns[i][0] = rewards[i] + discount * dones[i] * prev_return
+        deltas[i] = rewards[i] + discount * dones[i] * prev_value - values[i][0].item()
         advantages[i] = deltas[i] + (gae_lambda * discount) * prev_adv * dones[i]
 
         prev_return = returns[i][0]
-        prev_value = values[i][0].data
+        prev_value = values[i][0].item()
         prev_adv = advantages[i]
-        #print("PREV_R", prev_return)
-        #print("PREV_V", prev_value)
-        #print("PREV_A", prev_adv)
-        #print("RETURNS:{}".format(returns[i]))
 
-    trajs['dist']['means'] = torch.stack(trajs['dist']['means']).data.detach()
-    trajs['dist']['log_std'] = torch.stack(trajs['dist']['log_std']).data.detach()
     trajs['actions'] = torch.stack(trajs['actions'])
+    trajs['act_prob'] = torch.stack(trajs['act_prob'])
     trajs['returns'] = returns
     trajs['advantages'] = (advantages - advantages.mean())/ (advantages.std() + 1e-8) 
-    trajs['baselines'] = values.data.detach()
+    trajs['baselines'] = values
 
-
-def get_flat_params(params):
-    flat_params = []
-    for param in params:
-        flat_params.append(param.data.view(-1))
-    flat_params = torch.cat(flat_params)
+def get_flat_params(model):
+    flat_params = parameters_to_vector(model.parameters())
     return flat_params
 
 def set_flat_params(model, flat_params):
-    prev_ind = 0
-    for param in model.parameters():
-        flat_size = int(np.prod(list(param.size())))
-        param.data.copy_(flat_params[prev_ind:(prev_ind + flat_size)].view(param.size()))
-        prev_ind += flat_size
+    vector_to_parameters(flat_params, model.parameters())
     
 def get_flat_grads(model):
-    grads = []
-    for param in model.parameters():
-        grads.append(param.grad.view(-1))
-    flat_grad = torch.cat(grads)
+    flat_grad = parameters_to_vector([v.grad for v in model.parameters()])
     return flat_grad
     
 

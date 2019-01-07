@@ -43,11 +43,11 @@ class MLP_Policy(nn.Module):
         super(MLP_Policy, self).__init__()
         self.name = name
         self.use_new_head = False
-        self.fc1 = nn.Linear(input_dim, 64)
-        self.fc2 = nn.Linear(64, 64)
+        self.fc1 = nn.Linear(input_dim, 128)
+        self.fc2 = nn.Linear(128, 64)
         self.fc3 = nn.Linear(64, output_dim)
-        #self.fc3.weight.data.mul_(0.1)
-        #self.fc3.bias.data.mul_(0.0)
+        self.fc3.weight.data.mul_(0.1)
+        self.fc3.bias.data.mul_(0.0)
         if bool(kwargs):
             self.use_new_head = kwargs["use_new_head"]
             self.fc4 = nn.Linear(64, output_dim)
@@ -77,11 +77,11 @@ class MLP_Value(nn.Module):
     def __init__(self, input_dim, output_dim, name, **kwargs):
         super(MLP_Value, self).__init__()
         self.name = name
-        self.fc1 = nn.Linear(input_dim, 64)
-        self.fc2 = nn.Linear(64, 64)
+        self.fc1 = nn.Linear(input_dim, 128)
+        self.fc2 = nn.Linear(128, 64)
         self.fc3 = nn.Linear(64, output_dim)
-        #self.fc3.weight.data.mul_(0.1)
-        #self.fc3.bias.data.mul_(0.0)
+        self.fc3.weight.data.mul_(0.1)
+        self.fc3.bias.data.mul_(0.0)
 
     def forward(self, x):
         #print(self.fc1(x))
@@ -110,7 +110,15 @@ class GaussianMLPPolicy(Model):
         obs = torch.from_numpy(obs)
         mean, log_std = self.network(obs)            
         dist = DiagonalGaussian(mean, log_std)
-        return dist.sample(), dist.get_param()
+        sample = dist.sample()
+        return sample, dist.logli(sample)
+
+    def get_dists(self, obs):
+        obs = torch.from_numpy(obs)
+        mean, log_std = self.network(obs)
+        dist = DiagonalGaussian(mean, log_std)
+        return dist      
+
 
     def clear_grads(self):
         self.network.zero_grad()
@@ -131,7 +139,7 @@ class MLPBaseline(Model):
         return val
 
     def compute_baseline(self, obs):
-        obs = torch.tensor(obs)
+        obs = Variable(torch.tensor(obs))
         return self.value(obs)
 
     def clear_grads(self):
@@ -161,7 +169,7 @@ class MLPBaseline(Model):
         #self.optimizer.step(closure)
 
         #curr_params = get_flat_params(self.value.parameters()).data.detach().double().numpy()
-        curr_flat_params = get_flat_params(self.value.parameters()).double().numpy()
+        curr_flat_params = get_flat_params(self.value).detach().double().numpy()
         
         def val_loss_grad(x):
             
@@ -180,7 +188,7 @@ class MLPBaseline(Model):
             #print((values_-targets).size())
             #time1 = time.time()
             vf_loss = (values_ - targets).pow(2).mean()
-            print("LBFGS_LOSS:{}".format(vf_loss))
+            #print("LBFGS_LOSS:{}".format(vf_loss))
             #time2 = time.time()
             #print("TIME:{}".format(time2-time1))
             #for param in self.value.parameters():

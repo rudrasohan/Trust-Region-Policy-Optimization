@@ -32,6 +32,14 @@ class DiagonalGaussian(Distribution):
         self.normal = P.Normal(self.mean, (self.log_std.exp()))
         self.diagn = P.Independent(self.normal, 1)
 
+    def detach(self):
+        self.mean = self.mean.detach()
+        self.log_std = self.log_std.detach()
+        self.normal = None
+        self.diagn = None
+        self.normal = P.Normal(self.mean, (self.log_std.exp()))
+        self.diagn = P.Independent(self.normal, 1)
+
     def sample(self):
         return self.diagn.sample()
 
@@ -39,27 +47,17 @@ class DiagonalGaussian(Distribution):
         return dict(mean=self.mean, log_std=self.log_std)
 
     def logli(self, val):
-        #zs = (val - self.mean) * (-self.log_std).exp()
-        #std1 = self.log_std.numpy()
-        #mean1 = self.mean.numpy()
-        #zs = zs.numpy()
-        #print(mean1.shape[-1])
-        #final = - np.sum(std1, axis=-1) - 0.5 * np.sum(zs**2, axis=-1) - 0.5 * mean1.shape[-1] * np.log(2 * np.pi)
-        #print(np.exp(final))
-        #var = self.log_std.exp().pow(2)
-        #log_density = -(val - self.mean).pow(2) / (2.0 * var) - 0.5 * math.log(2.0 * math.pi) - self.log_std
-        #return log_density.sum(1)
         return self.diagn.log_prob(val)
 
     #@register_kl(P.Independent, P.Independent)
     def kl_div(self, other):
+        #print("IN KL FUNC")
         deviations = (other.log_std - self.log_std)
         d1 = (2.0 * self.log_std).exp()
         d2 = (2.0 * other.log_std).exp()
         sqmeans = (self.mean - other.mean).pow(2)
         d_KL = (sqmeans + d1 - d2) / (2.0 * d2 + 1e-8) + deviations
-        d_KL = d_KL.sum(1)
-        d_KL = torch.squeeze(d_KL)
+        d_KL = d_KL.sum(1, keepdim=True)
         return d_KL
 
     def entropy(self):
