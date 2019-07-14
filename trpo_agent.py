@@ -11,8 +11,7 @@ from distributions import DiagonalGaussian
 
 class TRPO(object):
 
-    def __init__(self,
-                 env,
+    def __init__(self, env,
                  policy,
                  baseline,
                  step_size=0.01, 
